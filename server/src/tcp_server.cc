@@ -12,7 +12,7 @@
 using namespace std;
 using namespace TCP_TEST;
 
-const int32_t max_listen_number = 5;
+const int32_t MaxListenNumber = 5;
 
 struct Options {
 	string port = "12334";
@@ -45,24 +45,22 @@ void readWrite() {
 }
 
 int32_t main(int32_t argc, char **argv) {
-	std::array<uint8_t, 1500> recv_buf;
-	memcpy(&recv_buf[0], "Echo from server", 17 - 1);
 
-	ECHO::getInstance().setMaxSockets(max_listen_number);
+	ECHO::getInstance().setMax(MaxListenNumber);
 
 	try{
 
 		Options options = parseOptions(argc, argv);
 
-    std::unique_ptr<Socket> serverSock = TcpV4SocketFactory::getFactory().createSock();
+    uniqueSock serverSock = TcpV4SocketFactory::getFactory().createSock();
 
     serverSock->bindSocket(options.port);
 
 		thread t(readWrite);
 
 		for(;;) {
-			serverSock->listenConnection(max_listen_number);
-			std::unique_ptr<Socket> newSock = serverSock->acceptConnection();
+			serverSock->listenConnection(MaxListenNumber);
+			uniqueSock newSock = serverSock->acceptConnection();
 			if(newSock)
 				ECHO::getInstance().addSocket(std::move(newSock));
 			std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -71,6 +69,8 @@ int32_t main(int32_t argc, char **argv) {
  		t.join();
 
 	} catch (const SocketException& e) {
+			cout << e.what() << endl;
+	} catch (const exception& e) {
 			cout << e.what() << endl;
 	}
 }

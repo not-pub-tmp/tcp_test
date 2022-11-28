@@ -1,6 +1,8 @@
 #include <getopt.h>
 #include <algorithm>
 #include <iostream>
+#include <thread>
+#include <sstream>
 
 #include "tcpsocketfactory.h"
 
@@ -46,23 +48,27 @@ int32_t main(int32_t argc, char **argv) {
 	try{
 		Options options = parseOptions(argc, argv);
 
-    cout << "server =" << options.server << " port=" << options.port << endl;
-
     unique_ptr<Socket> clientSock = TcpV4SocketFactory::getFactory().createSock();
 
     clientSock->connectTo(options.server, options.port);
 
-    string sendStr = "Hello client sent from and expect echo";
+		stringstream ss;
+		ss << "Request from proc:" << getpid() << " expecting echo" << endl;
 
-    clientSock->sendData((void*)sendStr.c_str(), sendStr.size());
+		for(auto loop = 0; loop < 10; ++loop) {
 
-    cout << "Client sent finished" << endl;
+			std::this_thread::sleep_for(std::chrono::milliseconds(1500));
 
-    auto len = clientSock->receiveData(recv_buf.data(), recv_buf.size());
+			clientSock->sendData((void*)(ss.str().c_str()), ss.str().size());
 
-    cout << "Got back from server = " << recv_buf.data() << endl;
+			auto len = clientSock->receiveData(recv_buf.data(), recv_buf.size());
+			if(0 < len)
+				cout << "Proc:" << getpid() << " received message is:" << recv_buf.data() << endl;
+		}
 
 	} catch (const SocketException& e) {
+			cout << e.what() << endl;
+	} catch (const exception& e) {
 			cout << e.what() << endl;
 	}
 }

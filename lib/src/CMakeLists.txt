@@ -1,4 +1,4 @@
-add_library(socket_test linux_socket.cc echo.cc)
+add_library(socket_test linux_socket.cc echo.cc message_format.cc)
 target_include_directories(socket_test 
           INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}
           )

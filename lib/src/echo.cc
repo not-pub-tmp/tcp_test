@@ -6,6 +6,9 @@
 #include <cstring>
 #include <chrono>
 #include <thread>
+#include <sys/select.h>
+#include <sys/types.h>
+#include <sys/stat.h>
 
 #include "linux_socket.h"
 #include "echo.h"
@@ -14,75 +17,123 @@ using namespace std;
 
 namespace TCP_TEST
 {
-using uniqueSock = std::unique_ptr<Socket>;
 
 void ECHO::addSocket(uniqueSock&& newSock) {
 
-  std::lock_guard<std::mutex> lock(mMutex);
-  if(mSocketVec.size() < m_max_sockets) {
-    mSocketVec.emplace_back(std::move(newSock));
+  lock_guard<mutex> lock(mMutex);
+  if(mSocketVec.size() < mMaxSockets) {
+    mSocketVec.emplace_back(move(newSock));
   }
   else {
     throw(SocketException("Reach the limitation of maximum sockets"));
   }
+
+// TODO release pipe handle graefully
+  static int32_t fd = -1;
+  if(fd == -1)
+  fd = open(pipeName.c_str(), O_WRONLY);
+  write(fd, "Hi", sizeof("Hi"));
 }
 
-void ECHO::setMaxSockets(uint32_t max_sockets) {
-  m_max_sockets = max_sockets;
+void ECHO::setMax(uint32_t max) {
+  mMaxSockets = max;
 }
 
-void ECHO::rmBadSocket(int32_t sock_fd) {
-  std::lock_guard<std::mutex> lock(mMutex);
-  auto it = remove_if(mSocketVec.begin(), mSocketVec.end(),
-                [=](uniqueSock& sock){return sock.get()->getSocket() == sock_fd;});
-  if(it != mSocketVec.end())
-    mSocketVec.erase(it, mSocketVec.end());
+void ECHO::rmDeadSocket(SOCKET sockFd) {
+
+  lock_guard<mutex> lock(ECHO::getInstance().mMutex);
+
+  // remove socket and release the socket which len=0 returned by recv which means the client socket was closed
+  auto it_rm = remove_if(mSocketVec.begin(), mSocketVec.end(),
+                        [&sockFd](auto& p){return p->getSocket() == sockFd;});
+  if(it_rm != mSocketVec.end())
+    mSocketVec.erase(it_rm, mSocketVec.end());
 }
 
 void ECHO::echo() {
-  std::array<uint8_t, 1500> recv_buf;
-	memcpy(&recv_buf[0], "Echo from server", 17 - 1);
+  array<uint8_t, 1500> recvBuf;
+  string echoHeader{"Echo from server. "};
 
-  bool empty;
-  std::vector<std::reference_wrapper<const uniqueSock>> refSockets;
-  refSockets.reserve(m_max_sockets);
+  SOCKET processingSock = 0;
+
+  /* create the FIFO (named pipe) */
+  mkfifo(pipeName.c_str(), 0666);
+  auto pipeFd = open(pipeName.c_str(), O_RDONLY);
+
+  vector<reference_wrapper<const uniqueSock>> refSockets;
+  refSockets.reserve(mMaxSockets);
 
   for(;;) {
-    {
-      // Determine if no valid sockets for echoing, if yes then sleep for a while
-      {
-        std::lock_guard<std::mutex> lock(ECHO::getInstance().mMutex);
-        empty = ECHO::getInstance().mSocketVec.empty();
-      }
-      if(empty) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(500));
-        continue;
+
+    SOCKET maxFd;
+    fd_set readFds;
+    FD_ZERO(&readFds);
+
+    auto max_Socket = max_element(refSockets.cbegin(), refSockets.cend(),
+                          [](auto a, auto b){ return a.get()->getSocket() < b.get()->getSocket(); });
+    if(max_Socket != refSockets.cend())
+      maxFd = max_Socket->get()->getSocket();
+
+    for_each(refSockets.cbegin(), refSockets.cend(),
+              [&readFds](auto it){ FD_SET(it.get()->getSocket(), &readFds);});
+
+
+    FD_SET(pipeFd, &readFds);
+    maxFd = max(maxFd, pipeFd);
+
+    // use select to monitor all echo sockets and the pipe file to read data and update socket list
+    try {
+      int32_t activity = select(maxFd + 1, &readFds, NULL, NULL, NULL);
+
+      switch (activity) {
+            case -1:
+            case 0:
+              throw(SocketException("Socket: Select error"));
+
+            default:
+              // main thread modified the shared vector
+              if (FD_ISSET(pipeFd, &readFds)) {
+                read(pipeFd, recvBuf.data(), recvBuf.size());
+                // create local copy of the reference of echo sockets from the shared vector for futher processing
+                lock_guard<mutex> lock(ECHO::getInstance().mMutex);
+
+                refSockets.clear();
+                for_each(mSocketVec.begin(), mSocketVec.end(),
+                              [&](const uniqueSock &e) {
+                              refSockets.push_back(cref<uniqueSock>(e));});
+              }
+
+              memcpy(recvBuf.data(), echoHeader.c_str(), echoHeader.size());
+
+              for(auto it = refSockets.cbegin(); it != refSockets.cend(); ++it) {
+                processingSock = it->get()->getSocket();
+
+                if(FD_ISSET(processingSock, &readFds)) {
+                  auto len = it->get()->receiveData(recvBuf.data() + echoHeader.size(), recvBuf.size() - echoHeader.size());
+                  if(0 >= len)
+                    throw(SocketException("Socket recv len = 0"));
+
+                  it->get()->sendData((void*)recvBuf.data(), len + echoHeader.size());
+
+                }
+              }
       }
 
-      // create local copy of the reference of echo sockets from the shared vector for futher processing
-      {
-        std::lock_guard<std::mutex> lock(ECHO::getInstance().mMutex);
-        std::for_each(mSocketVec.begin(), mSocketVec.end(), 
-                    [&](const uniqueSock &e) {
-                  refSockets.push_back(std::cref<uniqueSock>(e));});
-      }
+      FD_ZERO(&readFds);
 
-      // use select to monitor all echo sockets to read data
-      try {
-        for(auto& it : mSocketVec) {
-          auto len = it.get()->receiveData(recv_buf.data() + 16, recv_buf.size());
-          if(0 < len) {
-            std::cout << "Got sth = " << recv_buf.data() + 16 << std::endl;
-          }
-          else {
-            throw(SocketException("Socket recv len = 0"));
-          }
-          it.get()->sendData(recv_buf.data(), len);
-        } 
-      } catch (const SocketException& e) {
-        cout << "Exception is " << e.what() << endl;
-        mSocketVec.erase(mSocketVec.begin(), mSocketVec.end());
-      }
+    } catch (const SocketException& e) {
+      cout << "Exception is " << e.what() << endl;
+      rmDeadSocket(processingSock);
+
+      // update internal vector of reference to synconize the shared vector
+      refSockets.clear();
+      lock_guard<mutex> lock(ECHO::getInstance().mMutex);
+      for_each(mSocketVec.begin(), mSocketVec.end(),
+                    [&](const uniqueSock &p) {
+                    refSockets.push_back(cref<uniqueSock>(p));});
+
+    } catch (const exception& e) {
+      cout << "Exception is " << e.what() << endl;
     }
   }
 }

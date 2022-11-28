@@ -11,8 +11,6 @@ namespace TCP_TEST
 {
 using SOCKET  = int32_t;
 
-const size_t max_length = 1500;
-
 class SocketException : public std::exception {
 private:
   std::string message;
@@ -38,7 +36,6 @@ public:
 	~Socket();
 
 	int32_t receiveData(void *buf, size_t len);
-	int receiveDat(uint32_t len);
 	int32_t sendData(const void *buf, size_t len);
 	void connectTo(const std::string &host, const std::string &port);
 	void disconnect();
