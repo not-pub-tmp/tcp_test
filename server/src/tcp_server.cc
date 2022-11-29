@@ -53,7 +53,6 @@ int32_t main(int32_t argc, char **argv) {
 		Options options = parseOptions(argc, argv);
 
     uniqueSock serverSock = TcpV4SocketFactory::getFactory().createSock();
-
     serverSock->bindSocket(options.port);
 
 		thread t(readWrite);

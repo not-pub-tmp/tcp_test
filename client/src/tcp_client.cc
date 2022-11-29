@@ -3,9 +3,11 @@
 #include <iostream>
 #include <thread>
 #include <sstream>
+#include <stdexcept>
+
 
 #include "tcpsocketfactory.h"
-
+#include "message_format.h"
 
 using namespace std;
 using namespace TCP_TEST;
@@ -43,8 +45,6 @@ Options parseOptions(int32_t argc, char **argv) {
 }
 
 int32_t main(int32_t argc, char **argv) {
-  std::array<uint8_t, 1500> recv_buf;
-
 	try{
 		Options options = parseOptions(argc, argv);
 
@@ -55,15 +55,28 @@ int32_t main(int32_t argc, char **argv) {
 		stringstream ss;
 		ss << "Request from proc:" << getpid() << " expecting echo" << endl;
 
+		PACKET sendPacket;
+		PACKET recvPacket;
+
 		for(auto loop = 0; loop < 10; ++loop) {
 
-			std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+			auto sendLen = sendPacket.writeBuf(ss.str().c_str(), ss.str().size());
+			if(0 > sendLen)
+				throw invalid_argument("input buf too long");
 
-			clientSock->sendData((void*)(ss.str().c_str()), ss.str().size());
+			clientSock->sendData((void*)sendPacket.getBuf(), sendLen);
 
-			auto len = clientSock->receiveData(recv_buf.data(), recv_buf.size());
-			if(0 < len)
-				cout << "Proc:" << getpid() << " received message is:" << recv_buf.data() << endl;
+			auto recvLen = clientSock->receiveData(recvPacket.getBuf(), MAXBUFLEN);
+			if(0 >= recvLen)
+				throw(SocketException("Socket: recv error"));
+
+			auto payloadLen = recvPacket.getpacketLen(recvPacket.getBuf(), recvLen);
+			if(0 >= payloadLen)
+				throw(SocketException("Socket: parse packet error"));
+
+			cout << "Proc:" << getpid() << " received message is:" << recvPacket.getpayloadBuf() << endl;
+
+			std::this_thread::sleep_for(std::chrono::milliseconds(1000));				
 		}
 
 	} catch (const SocketException& e) {

@@ -4,25 +4,13 @@
 #include <memory>
 #include <unistd.h>
 #include <netinet/in.h>
+#include <sys/socket.h>
 
-#include "sys/socket.h"
+#include "socket_exception.h"
 
 namespace TCP_TEST
 {
 using SOCKET  = int32_t;
-
-class SocketException : public std::exception {
-private:
-  std::string message;
-
-public:
-	SocketException(std::string msg)
-								:message(msg) {};
-  const char* what () const noexcept {
-      return message.c_str();
-  };
-};
-
 
 class Socket
 {
@@ -40,13 +28,10 @@ public:
 	void connectTo(const std::string &host, const std::string &port);
 	void disconnect();
 	void bindSocket(const std::string &port);
-	void listenConnection(const int backlog);
+	void listenConnection(const int32_t backlog);
 	std::unique_ptr<Socket> acceptConnection();
 	int32_t setNonBlockingIO(bool status);
-	int32_t reuseAddress();
 	std::string getPort();
-	size_t getSendBufferSize();
-	size_t getReceiveBufferSize();
 	sockaddr_in getPeerAddr();
 	void setPeerAddr(sockaddr_in& peerAddr);
 	SOCKET getSocket();

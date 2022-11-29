@@ -57,7 +57,7 @@ int32_t Socket::sendData(const void *buf, size_t len) {
 void Socket::connectTo(const string &host, const string &port)
 {
 	struct sockaddr_in serv_addr;
-  int port_no;
+  int32_t port_no;
 
   try {
     port_no = stoi(port);

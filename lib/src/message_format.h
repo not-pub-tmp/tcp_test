@@ -5,15 +5,22 @@
 
 namespace TCP_TEST
 {
-const std::string echoServMessage{"Echo by Server:"};
-const std::string clientMessage{"Hello server request from %d, expecting response"};
+const std::string echoServMessage{"Echo from server. "};
+const uint32_t PREFIXLEN = 4;
+constexpr uint32_t PACKETHEADERLEN = PREFIXLEN + sizeof(uint32_t);
+constexpr uint32_t MAXBUFLEN = 1500 + PACKETHEADERLEN;
 class PACKET
 {
 public:
-  int32_t  getpacketLen(uint8_t* buf, uint32_t len);
-  uint8_t*  getPayload();
+  int32_t   writeBuf(const char*, uint32_t);
+  uint32_t  readBuf(uint8_t*, uint32_t);
+  uint8_t*  getRecvBuf();
+  uint32_t  appendEchoMessage(uint32_t);
+  uint8_t*  getBuf();
+  const uint8_t*  getpayloadBuf() const;
+  int32_t   getpacketLen(const uint8_t* const, const uint32_t);
 private:
-  const std::array<uint8_t, 4>  prefix{0xda, 0xda, 0xda, 0xda};
-  std::string                   message;    //TODO Could use protobuf message 
+  const std::array<uint8_t, PREFIXLEN>  mprefix{0xda, 0xda, 0xda, 0xda};
+  std::array<uint8_t, MAXBUFLEN>        mbuf;    //TODO Could use protobuf message 
 };
 }

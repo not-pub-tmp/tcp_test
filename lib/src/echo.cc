@@ -12,6 +12,7 @@
 
 #include "linux_socket.h"
 #include "echo.h"
+#include "message_format.h"
 
 using namespace std;
 
@@ -51,8 +52,6 @@ void ECHO::rmDeadSocket(SOCKET sockFd) {
 }
 
 void ECHO::echo() {
-  array<uint8_t, 1500> recvBuf;
-  string echoHeader{"Echo from server. "};
 
   SOCKET processingSock = 0;
 
@@ -62,6 +61,8 @@ void ECHO::echo() {
 
   vector<reference_wrapper<const uniqueSock>> refSockets;
   refSockets.reserve(mMaxSockets);
+
+  PACKET recvPacket;
 
   for(;;) {
 
@@ -86,38 +87,38 @@ void ECHO::echo() {
       int32_t activity = select(maxFd + 1, &readFds, NULL, NULL, NULL);
 
       switch (activity) {
-            case -1:
-            case 0:
-              throw(SocketException("Socket: Select error"));
+        case -1:
+        case 0:
+          throw(SocketException("Socket: Select error"));
 
-            default:
-              // main thread modified the shared vector
-              if (FD_ISSET(pipeFd, &readFds)) {
-                read(pipeFd, recvBuf.data(), recvBuf.size());
-                // create local copy of the reference of echo sockets from the shared vector for futher processing
-                lock_guard<mutex> lock(ECHO::getInstance().mMutex);
+        default:
+          array<uint8_t, 10> pipeRecvBuf;
+          // main thread modified the shared vector
+          if (FD_ISSET(pipeFd, &readFds)) {
+            read(pipeFd, pipeRecvBuf.data(), pipeRecvBuf.size());
+            // create local copy of the reference of echo sockets from the shared vector for futher processing
+            lock_guard<mutex> lock(ECHO::getInstance().mMutex);
 
-                refSockets.clear();
-                for_each(mSocketVec.begin(), mSocketVec.end(),
-                              [&](const uniqueSock &e) {
-                              refSockets.push_back(cref<uniqueSock>(e));});
-              }
+            refSockets.clear();
+            for_each(mSocketVec.begin(), mSocketVec.end(),
+                          [&](const uniqueSock &e) {
+                          refSockets.push_back(cref<uniqueSock>(e));});
+          }
 
-              memcpy(recvBuf.data(), echoHeader.c_str(), echoHeader.size());
+          for(auto it = refSockets.cbegin(); it != refSockets.cend(); ++it) {
+            processingSock = it->get()->getSocket();
 
-              for(auto it = refSockets.cbegin(); it != refSockets.cend(); ++it) {
-                processingSock = it->get()->getSocket();
+            if(FD_ISSET(processingSock, &readFds)) {
+              auto recvLen = it->get()->receiveData(recvPacket.getRecvBuf(), MAXBUFLEN - echoServMessage.size());
+              if(0 >= recvLen)
+                throw(SocketException("Socket recv len = 0"));
 
-                if(FD_ISSET(processingSock, &readFds)) {
-                  auto len = it->get()->receiveData(recvBuf.data() + echoHeader.size(), recvBuf.size() - echoHeader.size());
-                  if(0 >= len)
-                    throw(SocketException("Socket recv len = 0"));
+              auto sendLen = recvPacket.appendEchoMessage(recvLen);
 
-                  it->get()->sendData((void*)recvBuf.data(), len + echoHeader.size());
-
-                }
-              }
-      }
+              it->get()->sendData((void*)recvPacket.getBuf(), sendLen);
+            }
+          }
+        }
 
       FD_ZERO(&readFds);
 
